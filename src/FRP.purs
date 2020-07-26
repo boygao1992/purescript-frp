@@ -21,6 +21,9 @@ module FRP
   , Now
   , runNow
   -- Interop
+  , SinkBehavior
+  , sinkBehavior
+  , refSinkBehavior
   , SinkEvent
   , sinkEvent
   ) where
@@ -145,11 +148,12 @@ sampleBy f (Behavior behaviorA) eventB = mkEvent subscribeC
 accum :: forall a b. (b -> a -> b) -> b -> Event a -> Now (Behavior b)
 accum f initB eventA =
   Now do
-    ref <- Effect.Ref.new initB
+    sink <- refSinkBehavior initB
     _ <-
-      subscribe eventA \a ->
-        Effect.Ref.modify_ (f <@> a) ref
-    pure $ Behavior (Effect.Ref.read ref)
+      subscribe eventA \a -> do
+        b <- sink.read
+        sink.write (f b a)
+    pure sink.behavior
 
 foldl :: forall a b. (b -> a -> b) -> b -> Event a -> Now (Event b)
 foldl f initB eventA = do
@@ -235,3 +239,30 @@ sinkEvent = do
     { event: mkEvent subscribeA
     , push
     }
+
+type SinkBehavior a
+  = { behavior :: Behavior a
+    , read :: Effect a
+    , write :: a -> Effect Unit
+    }
+
+sinkBehavior ::
+  forall a.
+  { read :: Effect a
+  , write :: a -> Effect Unit
+  } ->
+  SinkBehavior a
+sinkBehavior { read, write } =
+  { behavior: Behavior read
+  , read
+  , write
+  }
+
+refSinkBehavior :: forall a. a -> Effect (SinkBehavior a)
+refSinkBehavior init = do
+  ref <- Effect.Ref.new init
+  pure
+    $ sinkBehavior
+        { read: Effect.Ref.read ref
+        , write: Effect.Ref.write <@> ref
+        }
